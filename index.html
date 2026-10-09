@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlideForge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo"></span>Slide<b>Forge</b></div>
+  <input id="deckTitle" class="title-in" spellcheck="false" placeholder="Untitled deck">
+  <div class="tools">
+    <button class="ic" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
+    <button class="ic" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
+    <span class="sep"></span>
+    <button id="newBtn" title="New deck">New</button>
+    <button id="openBtn" title="Open .json deck">Open</button>
+    <button id="saveBtn" title="Download deck as .json (Ctrl+S)">Save</button>
+    <span class="sep"></span>
+    <button id="outlineBtn" title="Turn a text outline into slides">Outline → Slides</button>
+    <button id="aiBtn" class="ai" title="AI assist (needs an API key)">✦ AI</button>
+    <span class="sep"></span>
+    <button id="exportBtn" title="Export a standalone presentable .html">Export HTML</button>
+    <button id="presentBtn" class="primary" title="Present (Ctrl+Enter)">▶ Present</button>
+  </div>
+</header>
+
+<main class="app">
+  <aside class="rail">
+    <div class="rail-head"><span>Slides</span><span id="slideCount"></span></div>
+    <div id="list" class="list"></div>
+    <button id="addSlide" class="add">+ Add slide</button>
+  </aside>
+
+  <section class="canvas">
+    <div class="canvas-bar">
+      <span id="layoutName" class="chip"></span>
+      <span class="grow"></span>
+      <button id="replayBtn" title="Replay entrance animation (R)">↻ Replay</button>
+    </div>
+    <div id="preview" class="preview"></div>
+    <div class="canvas-foot">
+      <button class="ic" id="pvPrev">‹</button>
+      <span id="pvCount">1 / 1</span>
+      <button class="ic" id="pvNext">›</button>
+      <span class="grow"></span>
+      <span class="kbd-hint">↑↓ select · Ctrl+D duplicate · Del delete · R replay · Ctrl+Enter present</span>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="tabs">
+      <button data-tab="slide" class="on">Slide</button>
+      <button data-tab="theme">Theme</button>
+    </div>
+    <div id="tab-slide" class="tab on"></div>
+    <div id="tab-theme" class="tab"></div>
+  </aside>
+</main>
+
+<div id="layoutPicker" class="pop"></div>
+<div id="modal" class="modal"></div>
+<div id="toasts" class="toasts"></div>
+<input type="file" id="fileOpen" accept=".json,application/json" hidden>
+<input type="file" id="imgPick" accept="image/*" hidden>
+
+<script src="js/deckcss.js"></script>
+<script src="js/render.js"></script>
+<script src="js/player.js"></script>
+<script src="js/layouts.js"></script>
+<script src="js/outline.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/panels.js"></script>
+</body>
+</html>
