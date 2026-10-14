@@ -457,7 +457,7 @@
     if (tab === 'deck'){
       pane.innerHTML =
         '<div class="fld"><label>What is the presentation about?</label><textarea rows="6" placeholder="e.g. A 10-minute kickoff for our new onboarding programme: why we’re changing it, what new hires will experience, the timeline, and how managers can help."></textarea>' +
-        '<small class="hint">Paste notes, a doc or an outline for the best results.</small></div>' +
+        '<small class="hint">Paste or drag a text file, image, or outline here for the best results.</small></div>' +
         '<div class="grid3"><div class="fld"><label>Slides</label><input type="number" min="3" max="30" value="10"></div>' +
         '<div class="fld"><label>Audience</label><input placeholder="e.g. executives"></div>' +
         '<div class="fld"><label>Tone</label><input placeholder="e.g. confident, warm"></div></div>' +
@@ -466,6 +466,35 @@
         '<label class="tgl"><input type="checkbox" checked><span></span>Apply suggested theme</label></div>';
       var ins = pane.querySelectorAll('input:not([type=radio]):not([type=checkbox])'), brief = pane.querySelector('textarea'), useTheme = pane.querySelector('input[type=checkbox]');
       if (preBrief) brief.value = preBrief;
+
+      // Drag-and-drop files onto the pane: text files → brief; images → paste image flow.
+      function hasFilesDT(e){ return Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0; }
+      pane.addEventListener('dragover', function(e){
+        if (!hasFilesDT(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        pane.style.outline = '2px dashed var(--accent,#7c3aed)';
+        pane.style.outlineOffset = '-3px';
+      });
+      pane.addEventListener('dragleave', function(e){
+        if (!pane.contains(e.relatedTarget)){ pane.style.outline = ''; pane.style.outlineOffset = ''; }
+      });
+      pane.addEventListener('drop', function(e){
+        e.preventDefault();
+        pane.style.outline = ''; pane.style.outlineOffset = '';
+        var file = e.dataTransfer.files[0];
+        if (!file) return;
+        if (/^image\//.test(file.type)){
+          SF.readImage(file).then(function(url){ P.pasteImage(url, file.type); }, function(err){ ui.toast(err.message, 'err'); });
+        } else if (/^text\//.test(file.type) || /\.(txt|md|csv|json)$/i.test(file.name)){
+          var fr = new FileReader();
+          fr.onload = function(){ brief.value = fr.result; ui.toast('File loaded into brief'); };
+          fr.readAsText(file);
+        } else {
+          ui.toast('Drop a plain text file or image here. For Word/PDF, paste the text instead.', '', 4000);
+        }
+      });
+
       actions.push({ label:'✦ Generate', primary:true, onClick:function(ctx){
         if (!brief.value.trim()){ ui.toast('Describe the presentation first.'); return false; }
         var count = Math.max(3, Math.min(30, +ins[0].value || 10));
