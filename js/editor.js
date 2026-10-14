@@ -463,6 +463,38 @@
   function typingIn(el){ return el && (/INPUT|TEXTAREA|SELECT/.test(el.tagName) || el.isContentEditable); }
 
   function wire(){
+    // Global paste: image → choose add-to-slide or extract content; large text → offer as AI brief.
+    document.addEventListener('paste', function(e){
+      if (E.presenting) return;
+      var cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      var items = Array.prototype.slice.call(cd.items || []);
+      for (var i = 0; i < items.length; i++){
+        if (items[i].kind === 'file' && /^image\//.test(items[i].type)){
+          var active = document.activeElement;
+          if (active && active.closest && active.closest('.imgf')) return;
+          e.preventDefault();
+          (function(item){
+            var file = item.getAsFile();
+            if (!file) return;
+            SF.readImage(file).then(function(url){
+              if (SF.panels) SF.panels.pasteImage(url, file.type);
+            }, function(err){ ui.toast(err.message, 'err'); });
+          })(items[i]);
+          return;
+        }
+      }
+      var active2 = document.activeElement;
+      var inText = active2 && (/^(INPUT|TEXTAREA)$/.test(active2.tagName) || active2.isContentEditable);
+      if (!inText){
+        var text = cd.getData('text/plain') || '';
+        if (text.trim().length > 500){
+          e.preventDefault();
+          if (SF.panels) SF.panels.pasteText(text.trim());
+        }
+      }
+    });
+
     $('undoBtn').onclick = E.undo;
     $('redoBtn').onclick = E.redo;
     $('newBtn').onclick = function(){

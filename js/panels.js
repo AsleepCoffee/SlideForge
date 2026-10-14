@@ -395,7 +395,7 @@
 
   /* ======================= AI ======================= */
 
-  var AI_TABS = [['deck','Generate deck'],['rewrite','Rewrite slide'],['theme','Suggest theme'],['settings','Settings']];
+  var AI_TABS = [['deck','Generate deck'],['rewrite','Rewrite slide'],['edit','Edit deck'],['theme','Suggest theme'],['settings','Settings']];
   var aiRun = null;
 
   function aiTabs(active){
@@ -424,7 +424,7 @@
     });
   }
 
-  P.ai = function(tab){
+  P.ai = function(tab, preBrief){
     if (!SF.ai.ready() && tab !== 'settings') tab = 'settings:' + (tab || 'deck');
     var next = '';
     if (tab.indexOf('settings:') === 0){ next = tab.slice(9); tab = 'settings'; }
@@ -465,6 +465,7 @@
         '<label><input type="radio" name="aim" value="append"> Insert after current slide</label>' +
         '<label class="tgl"><input type="checkbox" checked><span></span>Apply suggested theme</label></div>';
       var ins = pane.querySelectorAll('input:not([type=radio]):not([type=checkbox])'), brief = pane.querySelector('textarea'), useTheme = pane.querySelector('input[type=checkbox]');
+      if (preBrief) brief.value = preBrief;
       actions.push({ label:'✦ Generate', primary:true, onClick:function(ctx){
         if (!brief.value.trim()){ ui.toast('Describe the presentation first.'); return false; }
         var count = Math.max(3, Math.min(30, +ins[0].value || 10));
@@ -513,6 +514,32 @@
       } });
     }
 
+    if (tab === 'edit'){
+      pane.innerHTML =
+        '<p class="mdl-p">Editing the full deck: <b>' + esc(E.deck.title || 'Untitled') + '</b> · ' + E.deck.slides.length + ' slides</p>' +
+        '<div class="fld"><label>What should change?</label><textarea rows="3" placeholder="e.g. Make it shorter — aim for 6 slides. Keep only the most important points."></textarea></div>' +
+        chips(['Make it shorter', 'Make it longer', 'Sharpen and simplify', 'Add more detail', 'Fix grammar and tone', 'Strengthen opening and closing']) +
+        '<div class="fld"><label>Target slide count <small>(optional)</small></label><input type="number" min="3" max="30" placeholder="slides" style="width:6em"></div>';
+      var instr = pane.querySelector('textarea'), target = pane.querySelector('input[type=number]');
+      var origCount = E.deck.slides.length;
+      bindChips(pane, instr);
+      actions.push({ label:'✦ Edit deck', primary:true, onClick:function(ctx){
+        if (!instr.value.trim()){ ui.toast('Describe what should change.'); return false; }
+        var instruction = instr.value.trim();
+        if (target.value) instruction += '\nAim for approximately ' + target.value + ' slides.';
+        return run(ctx, 'Reading the deck…', function(o){
+          return SF.ai.editDeck(E.deck, instruction, o);
+        }, function(text){
+          var n = (text.match(/"layout"/g) || []).length;
+          return n ? 'Editing slide ' + n + ' of ~' + origCount + '…' : 'Reading the deck…';
+        }).then(function(r){
+          E.change(function(d){ d.title = r.title; d.slides = r.slides; }, '', 'structure');
+          ctx.close();
+          ui.toast('Deck edited — Ctrl+Z to undo');
+        }, function(){});
+      } });
+    }
+
     if (tab === 'theme'){
       pane.innerHTML =
         '<div class="fld"><label>How should the deck feel? (optional)</label><input placeholder="e.g. calm and trustworthy"></div>' +
@@ -536,6 +563,68 @@
       if (b && !aiRun) P.ai(b.getAttribute('data-t'));
     };
     return ctx;
+  };
+
+  /* ======================= paste handlers ======================= */
+
+  P.pasteImage = function(url, mimeType){
+    var ctl = null;
+    var body = h('<div>' +
+      '<div style="text-align:center;margin-bottom:12px"><img alt="Pasted image" style="max-width:100%;max-height:160px;border-radius:4px;display:block;margin:0 auto"></div>' +
+      '<p class="mdl-p">What would you like to do with this image?</p>' +
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      '<label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="radio" name="pim" value="slide" checked> Add to the current slide as an image</label>' +
+      '<label style="display:flex;gap:8px;align-items:center;cursor:pointer' + (!SF.ai.ready() ? ';opacity:0.5' : '') + '"><input type="radio" name="pim" value="parse"' + (!SF.ai.ready() ? ' disabled' : '') + '> Extract content and generate slides (AI)</label>' +
+      (!SF.ai.ready() ? '<small class="hint" style="margin-left:22px">Needs an AI key — open ✦ AI → Settings first</small>' : '') +
+      '</div></div>');
+    body.querySelector('img').src = url;
+    ui.modal({ title:'Pasted image', body:body,
+      onClose:function(){ if (ctl) ctl.abort(); },
+      actions:[
+        { label:'Cancel', cancel:true },
+        { label:'Continue', primary:true, onClick:function(ctx){
+          var mode = body.querySelector('input[name=pim]:checked').value;
+          if (mode === 'slide'){
+            var s = E.deck.slides[E.cur];
+            E.change(function(){
+              if (!('image' in s.data)) SF.convertSlide(s, 'split');
+              s.data.image = url;
+            });
+            ui.toast('Image added to slide');
+          } else {
+            ctl = new AbortController();
+            ctx.busy(true, 'Extracting content from image…');
+            SF.ai.extractContent(url, mimeType || 'image/jpeg', { signal:ctl.signal }).then(function(r){
+              ctl = null;
+              if (ctx.closed) return;
+              ctx.close();
+              var brief = (r.title ? r.title + '\n\n' : '') + (r.outline || '');
+              P.ai('deck', brief || '');
+            }, function(err){
+              ctl = null;
+              if (ctx.closed) return;
+              ctx.busy(false);
+              if (err.name !== 'AbortError') ui.toast(err.message, 'err', 6000);
+            });
+            return false;
+          }
+        } }
+      ]
+    });
+  };
+
+  P.pasteText = function(text){
+    var preview = esc(text.slice(0, 320)) + (text.length > 320 ? '…' : '');
+    ui.modal({ title:'Use pasted content as brief?', body:
+      '<p class="mdl-p" style="white-space:pre-wrap;max-height:140px;overflow:auto;font-size:0.85em;line-height:1.6;background:var(--bg2,rgba(0,0,0,.06));padding:8px 10px;border-radius:4px">' + preview + '</p>' +
+      '<p class="mdl-p"><small>' + text.length.toLocaleString() + ' characters — AI will use this as the presentation brief.</small></p>',
+      actions:[
+        { label:'Cancel', cancel:true },
+        { label:'Open AI and generate slides', primary:true, onClick:function(){
+          setTimeout(function(){ P.ai('deck', text); });
+        } }
+      ]
+    });
   };
 
   /* ======================= init ======================= */

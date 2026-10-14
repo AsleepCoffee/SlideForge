@@ -30,12 +30,15 @@
     var key = ai.key();
     if (!key) throw new Error('Add your Anthropic API key first.');
     var model = ai.model();
+    var userContent = opts.imageUrl
+      ? [{ type:'image', source:{ type:'base64', media_type:opts.imageType||'image/jpeg', data:opts.imageUrl.replace(/^data:[^;]+;base64,/,'') } }, { type:'text', text:user }]
+      : user;
     var body = {
       model: model,
       max_tokens: opts.maxTokens || 16000,
       stream: true,
       system: system,
-      messages: [{ role:'user', content:user }],
+      messages: [{ role:'user', content:userContent }],
       output_config: { format: { type:'json_schema', schema:schema } }
     };
     var headers = {
@@ -125,6 +128,8 @@
     reason: { type:'string' }
   });
   var DECK_SCHEMA = obj({ title:{ type:'string' }, theme:THEME_SCHEMA, slides:{ type:'array', items:SLIDE_SCHEMA } });
+  var EXTRACT_SCHEMA = obj({ title:{ type:'string' }, outline:{ type:'string' } });
+  var EDIT_DECK_SCHEMA = obj({ title:{ type:'string' }, slides:{ type:'array', items:SLIDE_SCHEMA } });
 
   function layoutGuide(){
     return SF.LAYOUT_ORDER.map(function(l){
@@ -225,5 +230,45 @@
       '\n\nPick a theme that suits the subject and audience and keeps text readable.';
     var r = await call(system, user, THEME_SCHEMA, { signal:opts.signal, onText:opts.onText, maxTokens:4000, effort:'low' });
     return { theme:toTheme(r, deck.theme), reason:r.reason || '' };
+  };
+
+  ai.extractContent = async function(imageUrl, imageType, opts){
+    opts = opts || {};
+    var system = 'You extract content from images to help build a presentation. Look for text, data, charts, tables, headings, bullet points and key ideas. ' +
+      'Return a short descriptive title and a detailed multi-line outline of everything you find.';
+    var user = 'Extract all the content from this image so I can turn it into a presentation. Include any text, numbers, structure, and ideas you see.';
+    var r = await call(system, user, EXTRACT_SCHEMA, Object.assign({}, opts, { imageUrl:imageUrl, imageType:imageType, maxTokens:4000, effort:'low' }));
+    return { title:String(r.title || ''), outline:String(r.outline || '') };
+  };
+
+  ai.editDeck = async function(deck, instruction, opts){
+    opts = opts || {};
+    var current = deck.slides.map(function(s){
+      return {
+        layout: s.layout,
+        fields: Object.keys(s.data).filter(function(k){ return s.data[k] && k !== 'image'; }).map(function(k){ return { key:k, value:s.data[k] }; }),
+        notes: s.notes || ''
+      };
+    });
+    var system = 'You are editing a complete SlideForge presentation. Return the full revised deck as JSON matching the schema. ' +
+      'Preserve facts already in the deck unless the instruction says to change them. Images are handled separately — only edit text.\n\n' +
+      'Layouts:\n' + layoutGuide() + '\n\n' + STYLE_RULES;
+    var user = 'Deck title: ' + deck.title + '\nCurrent slides (' + deck.slides.length + '):\n' + JSON.stringify(current, null, 2) +
+      '\n\nInstruction: ' + instruction;
+    var r = await call(system, user, EDIT_DECK_SCHEMA, { signal:opts.signal, onText:opts.onText, maxTokens:32000 });
+    var slides = (r.slides || []).map(function(s, i){
+      var out = toSlide(s);
+      var orig = deck.slides[i];
+      if (orig){
+        out.id = orig.id;
+        if (orig.accent) out.accent = orig.accent;
+        if (orig.transition) out.transition = orig.transition;
+        if (orig.section) out.section = orig.section;
+        if (orig.data.image && 'image' in out.data) out.data.image = orig.data.image;
+      }
+      return out;
+    });
+    if (!slides.length) throw new Error('Claude returned an empty deck. Try again.');
+    return { title:String(r.title || deck.title), slides:slides };
   };
 })();
