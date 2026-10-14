@@ -614,17 +614,8 @@
   };
 
   P.pasteText = function(text){
-    var preview = esc(text.slice(0, 320)) + (text.length > 320 ? '…' : '');
-    ui.modal({ title:'Use pasted content as brief?', body:
-      '<p class="mdl-p" style="white-space:pre-wrap;max-height:140px;overflow:auto;font-size:0.85em;line-height:1.6;background:var(--bg2,rgba(0,0,0,.06));padding:8px 10px;border-radius:4px">' + preview + '</p>' +
-      '<p class="mdl-p"><small>' + text.length.toLocaleString() + ' characters — AI will use this as the presentation brief.</small></p>',
-      actions:[
-        { label:'Cancel', cancel:true },
-        { label:'Open AI and generate slides', primary:true, onClick:function(){
-          setTimeout(function(){ P.ai('deck', text); });
-        } }
-      ]
-    });
+    P.ai('deck', text);
+    ui.toast('Content pasted into the brief — edit if needed, then Generate');
   };
 
   /* ======================= init ======================= */
