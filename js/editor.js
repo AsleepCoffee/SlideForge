@@ -18,6 +18,20 @@
     setTimeout(function(){ t.classList.remove('in'); setTimeout(function(){ t.remove(); }, 300); }, ms || 2600);
   };
 
+  // A toast that stays until closed, for longer jobs.
+  ui.status = function(msg){
+    var t = document.createElement('div');
+    t.className = 'toast sticky';
+    t.innerHTML = '<i class="spin"></i><span></span>';
+    t.lastChild.textContent = msg;
+    $('toasts').appendChild(t);
+    requestAnimationFrame(function(){ t.classList.add('in'); });
+    return {
+      set:function(m){ t.lastChild.textContent = m; },
+      close:function(){ t.classList.remove('in'); setTimeout(function(){ t.remove(); }, 300); }
+    };
+  };
+
   var openModal = null;
   ui.modal = function(o){
     if (openModal) openModal.close();
@@ -105,6 +119,66 @@
       };
       fr.readAsDataURL(file);
     });
+  };
+
+  // Document readers are loaded only when someone first drops that kind of file.
+  var scripts = {};
+  function loadScript(src){
+    if (!scripts[src]) scripts[src] = new Promise(function(resolve, reject){
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = function(){ delete scripts[src]; s.remove(); reject(new Error('Couldn’t load the document reader. Check your connection.')); };
+      document.head.appendChild(s);
+    });
+    return scripts[src];
+  }
+  var CDN = 'https://cdnjs.cloudflare.com/ajax/libs/';
+  function xmlText(xml){
+    var doc = new DOMParser().parseFromString(xml, 'application/xml');
+    return Array.prototype.map.call(doc.getElementsByTagName('a:p'), function(p){
+      return Array.prototype.map.call(p.getElementsByTagName('a:t'), function(t){ return t.textContent; }).join('');
+    }).filter(function(l){ return l.trim(); }).join('\n');
+  }
+
+  // Plain text from a Word, PDF, PowerPoint, HTML or text file.
+  SF.readDocument = async function(file){
+    var name = file.name || '', type = file.type || '';
+    if (/\.docx$/i.test(name) || /wordprocessingml/.test(type)){
+      await loadScript(CDN + 'mammoth/1.6.0/mammoth.browser.min.js');
+      return (await window.mammoth.extractRawText({ arrayBuffer:await file.arrayBuffer() })).value;
+    }
+    if (/\.pdf$/i.test(name) || type === 'application/pdf'){
+      await loadScript(CDN + 'pdf.js/3.11.174/pdf.min.js');
+      var lib = window.pdfjsLib;
+      lib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.js/3.11.174/pdf.worker.min.js';
+      var pdf = await lib.getDocument({ data:await file.arrayBuffer() }).promise, pages = [];
+      for (var p = 1; p <= pdf.numPages; p++){
+        var tc = await (await pdf.getPage(p)).getTextContent();
+        pages.push(tc.items.map(function(it){ return it.str + (it.hasEOL ? '\n' : ' '); }).join(''));
+      }
+      return pages.join('\n\n');
+    }
+    if (/\.pptx$/i.test(name) || /presentationml/.test(type)){
+      await loadScript(CDN + 'jszip/3.10.1/jszip.min.js');
+      var zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+      var num = function(n){ return +n.match(/(\d+)\.xml$/)[1]; };
+      var slides = Object.keys(zip.files).filter(function(n){ return /^ppt\/slides\/slide\d+\.xml$/.test(n); }).sort(function(a, b){ return num(a) - num(b); });
+      var out = [];
+      for (var i = 0; i < slides.length; i++){
+        var text = xmlText(await zip.file(slides[i]).async('string'));
+        var notes = zip.file('ppt/notesSlides/notesSlide' + num(slides[i]) + '.xml');
+        var nt = notes ? xmlText(await notes.async('string')).replace(/^\d+$/gm, '').trim() : '';
+        out.push('Slide ' + (i + 1) + ':\n' + text + (nt ? '\nNotes: ' + nt : ''));
+      }
+      return out.join('\n\n');
+    }
+    if (/\.html?$/i.test(name) || type === 'text/html'){
+      return new DOMParser().parseFromString(await file.text(), 'text/html').body.innerText || '';
+    }
+    if (/^text\//.test(type) || /\.(txt|md|markdown|csv|tsv|json|xml|rtf)$/i.test(name)) return file.text();
+    if (/\.(doc|ppt|xls|xlsx|pages|key)$/i.test(name)) throw new Error('Save it as .docx, .pptx or .pdf, or copy and paste the text.');
+    throw new Error('That file type can’t be read. Use Word (.docx), PDF, PowerPoint (.pptx), text or a picture.');
   };
 
   /* ---------- undo / redo ---------- */
@@ -462,7 +536,25 @@
 
   function typingIn(el){ return el && (/INPUT|TEXTAREA|SELECT/.test(el.tagName) || el.isContentEditable); }
 
+  // Without this, a file dropped anywhere outside a drop target makes the browser open it in a new tab.
+  var dragDepth = 0;
+  function hasFiles(e){ return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0; }
+  function endDrag(){ dragDepth = 0; document.body.classList.remove('sf-drag'); }
+  function wireFileDrop(){
+    document.addEventListener('dragenter', function(e){ if (!hasFiles(e)) return; dragDepth++; document.body.classList.add('sf-drag'); });
+    document.addEventListener('dragleave', function(e){ if (!hasFiles(e)) return; if (--dragDepth <= 0) endDrag(); });
+    document.addEventListener('dragover', function(e){ if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    document.addEventListener('drop', function(e){
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      endDrag();
+      if (E.presenting || !SF.panels) return;
+      SF.panels.dropFiles(e.dataTransfer.files);
+    });
+  }
+
   function wire(){
+    wireFileDrop();
     // Global paste: image → choose add-to-slide or extract content; large text → offer as AI brief.
     document.addEventListener('paste', function(e){
       if (E.presenting) return;
@@ -558,9 +650,11 @@
     prev.ondragover = function(e){ if (e.dataTransfer.types.indexOf('Files') >= 0){ e.preventDefault(); prev.classList.add('drop'); } };
     prev.ondragleave = function(){ prev.classList.remove('drop'); };
     prev.ondrop = function(e){
-      e.preventDefault(); prev.classList.remove('drop');
+      prev.classList.remove('drop');
       var file = e.dataTransfer.files[0];
-      if (!file) return;
+      // Documents fall through to the page-wide handler, which sends them to the AI brief.
+      if (!file || !/^image\//.test(file.type) || e.dataTransfer.files.length > 1) return;
+      e.preventDefault(); e.stopPropagation(); endDrag();
       var s = E.deck.slides[E.cur];
       SF.readImage(file).then(function(url){
         E.change(function(){

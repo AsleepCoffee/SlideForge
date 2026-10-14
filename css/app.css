@@ -270,3 +270,8 @@ select{appearance:none;padding-right:26px;cursor:pointer;
   .brand{font-size:0}.brand .logo{font-size:13px}
   .ol{grid-template-columns:1fr}.ol-help{display:none}
 }
+.toast.sticky{display:flex;align-items:center;gap:10px}
+.toast .spin{width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite;flex:none}
+.brief-foot{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:6px}
+.brief-foot .hint{margin:0}
+.sf-drag textarea.ai-brief{border:2px dashed var(--brand);background:color-mix(in srgb,var(--brand) 8%,transparent)}

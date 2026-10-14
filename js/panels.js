@@ -424,8 +424,11 @@
     });
   }
 
+  // Brief text waiting while the user adds an API key first.
+  var pendingBrief = '';
+
   P.ai = function(tab, preBrief){
-    if (!SF.ai.ready() && tab !== 'settings') tab = 'settings:' + (tab || 'deck');
+    if (!SF.ai.ready() && tab !== 'settings'){ tab = 'settings:' + (tab || 'deck'); if (preBrief) pendingBrief = preBrief; }
     var next = '';
     if (tab.indexOf('settings:') === 0){ next = tab.slice(9); tab = 'settings'; }
     tab = tab || 'deck';
@@ -456,8 +459,8 @@
 
     if (tab === 'deck'){
       pane.innerHTML =
-        '<div class="fld"><label>What is the presentation about?</label><textarea rows="6" placeholder="e.g. A 10-minute kickoff for our new onboarding programme: why we’re changing it, what new hires will experience, the timeline, and how managers can help."></textarea>' +
-        '<small class="hint">Paste or drag a text file, image, or outline here for the best results.</small></div>' +
+        '<div class="fld"><label>What is the presentation about?</label><textarea class="ai-brief" rows="6" placeholder="e.g. A 10-minute kickoff for our new onboarding programme: why we’re changing it, what new hires will experience, the timeline, and how managers can help."></textarea>' +
+        '<div class="brief-foot"><small class="hint">Drop or paste a Word doc, PDF, PowerPoint, text file or picture here — or type your notes.</small><button class="sm brief-add">Add files…</button></div></div>' +
         '<div class="grid3"><div class="fld"><label>Slides</label><input type="number" min="3" max="30" value="10"></div>' +
         '<div class="fld"><label>Audience</label><input placeholder="e.g. executives"></div>' +
         '<div class="fld"><label>Tone</label><input placeholder="e.g. confident, warm"></div></div>' +
@@ -465,35 +468,10 @@
         '<label><input type="radio" name="aim" value="append"> Insert after current slide</label>' +
         '<label class="tgl"><input type="checkbox" checked><span></span>Apply suggested theme</label></div>';
       var ins = pane.querySelectorAll('input:not([type=radio]):not([type=checkbox])'), brief = pane.querySelector('textarea'), useTheme = pane.querySelector('input[type=checkbox]');
+      preBrief = preBrief || pendingBrief;
+      pendingBrief = '';
       if (preBrief) brief.value = preBrief;
-
-      // Drag-and-drop files onto the pane: text files → brief; images → paste image flow.
-      function hasFilesDT(e){ return Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0; }
-      pane.addEventListener('dragover', function(e){
-        if (!hasFilesDT(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        pane.style.outline = '2px dashed var(--accent,#7c3aed)';
-        pane.style.outlineOffset = '-3px';
-      });
-      pane.addEventListener('dragleave', function(e){
-        if (!pane.contains(e.relatedTarget)){ pane.style.outline = ''; pane.style.outlineOffset = ''; }
-      });
-      pane.addEventListener('drop', function(e){
-        e.preventDefault();
-        pane.style.outline = ''; pane.style.outlineOffset = '';
-        var file = e.dataTransfer.files[0];
-        if (!file) return;
-        if (/^image\//.test(file.type)){
-          SF.readImage(file).then(function(url){ P.pasteImage(url, file.type); }, function(err){ ui.toast(err.message, 'err'); });
-        } else if (/^text\//.test(file.type) || /\.(txt|md|csv|json)$/i.test(file.name)){
-          var fr = new FileReader();
-          fr.onload = function(){ brief.value = fr.result; ui.toast('File loaded into brief'); };
-          fr.readAsText(file);
-        } else {
-          ui.toast('Drop a plain text file or image here. For Word/PDF, paste the text instead.', '', 4000);
-        }
-      });
+      pane.querySelector('.brief-add').onclick = pickFiles;
 
       actions.push({ label:'✦ Generate', primary:true, onClick:function(ctx){
         if (!brief.value.trim()){ ui.toast('Describe the presentation first.'); return false; }
@@ -640,6 +618,64 @@
         } }
       ]
     });
+  };
+
+  function openBrief(){ return document.querySelector('#modal textarea.ai-brief'); }
+
+  function pickFiles(){
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.multiple = true;
+    inp.accept = '.docx,.pdf,.pptx,.txt,.md,.csv,.json,.html,.htm,text/*,image/*';
+    inp.onchange = function(){ P.dropFiles(inp.files); };
+    inp.click();
+  }
+
+  // Dropped or picked files: documents are read to text, pictures are read by the AI with vision,
+  // and everything is added to the Generate deck brief. A lone picture dropped with the AI panel
+  // closed asks whether it belongs on the current slide instead.
+  var reading = false;
+  P.dropFiles = async function(list){
+    var files = Array.prototype.slice.call(list || []);
+    if (!files.length) return;
+    var isImg = function(f){ return /^image\//.test(f.type); };
+    if (!openBrief() && files.length === 1 && isImg(files[0])){
+      SF.readImage(files[0]).then(function(url){ P.pasteImage(url, files[0].type); }, function(err){ ui.toast(err.message, 'err'); });
+      return;
+    }
+    if (reading){ ui.toast('Still reading the last files…'); return; }
+    reading = true;
+    var parts = [], failed = [];
+    var status = ui.status('Reading ' + (files.length === 1 ? files[0].name : files.length + ' files') + '…');
+    for (var i = 0; i < files.length; i++){
+      var f = files[i];
+      if (files.length > 1) status.set('Reading ' + f.name + ' (' + (i + 1) + ' of ' + files.length + ')…');
+      try {
+        var text;
+        if (isImg(f)){
+          if (!SF.ai.ready()) throw new Error('reading pictures needs an AI key (✦ AI → Settings)');
+          var r = await SF.ai.extractContent(await SF.readImage(f), f.type);
+          text = (r.title ? r.title + '\n' : '') + r.outline;
+        } else text = await SF.readDocument(f);
+        text = String(text || '').replace(/\n{3,}/g, '\n\n').trim();
+        if (!text) throw new Error('no text found' + (/\.pdf$/i.test(f.name) ? ' (a scanned PDF? drop a screenshot of it instead)' : ''));
+        parts.push(files.length > 1 ? '[' + f.name + ']\n' + text : text);
+      } catch (err){ failed.push(f.name + ': ' + err.message); }
+    }
+    status.close();
+    reading = false;
+    if (failed.length) ui.toast('Couldn’t read ' + failed.join('; '), 'err', 8000);
+    if (!parts.length) return;
+    var add = parts.join('\n\n'), brief = openBrief();
+    if (brief){
+      brief.value = brief.value.trim() ? brief.value.trim() + '\n\n' + add : add;
+      brief.focus();
+      brief.scrollTop = brief.scrollHeight;
+      ui.toast('Added ' + (parts.length === 1 ? 'the file' : parts.length + ' files') + ' to the brief');
+    } else {
+      P.ai('deck', add);
+      if (SF.ai.ready()) ui.toast('Added to the brief — edit if needed, then Generate');
+    }
   };
 
   P.pasteText = function(text){

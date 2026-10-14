@@ -30,9 +30,12 @@
     var key = ai.key();
     if (!key) throw new Error('Add your Anthropic API key first.');
     var model = ai.model();
-    var userContent = opts.imageUrl
-      ? [{ type:'image', source:{ type:'base64', media_type:opts.imageType||'image/jpeg', data:opts.imageUrl.replace(/^data:[^;]+;base64,/,'') } }, { type:'text', text:user }]
-      : user;
+    var userContent = user;
+    if (opts.imageUrl){
+      var m = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.*)$/.exec(opts.imageUrl);
+      if (!m) throw new Error('Claude can read PNG, JPEG, GIF or WebP pictures. Try a screenshot instead.');
+      userContent = [{ type:'image', source:{ type:'base64', media_type:m[1], data:m[2] } }, { type:'text', text:user }];
+    }
     var body = {
       model: model,
       max_tokens: opts.maxTokens || 16000,
